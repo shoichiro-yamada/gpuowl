@@ -25,6 +25,87 @@ const char *AGENT = "gpuowl v" VERSION;
 const unsigned BUF_CONST = CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS;
 const unsigned BUF_RW    = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS;
 
+/*
+ * Improve accuracy by reducing x to range [0..1/8]
+ * before multiplication by 2 * PI.
+ */
+#define K2PI 6.2831853071795864769252867665590057683943388
+#define m2pi(m, n) ((K2PI * (m)) / (n))
+static void ap_sincos(int m, int n, double * si, double * co)
+{
+        double s,c,theta;
+        int n14,n24,n34,n44;
+        int m14,m44;
+        int n18,n28,n38,n48,n58,n68,n78;
+        int m88;
+
+        n14 = n;
+        n24 = n14 + n14;
+        n34 = n14 + n24;
+        n44 = n24 + n24;
+
+        m14 = m;
+        m44 = m14 + m14;
+        m44 = m44 + m44;
+
+        n18 = n;
+        n28 = n18 + n18;
+        n38 = n18 + n28;
+        n48 = n28 + n28;
+        n58 = n28 + n38;
+        n68 = n38 + n38;
+        n78 = n38 + n48;
+
+        m88 = m + m;
+        m88 = m88 + m88;
+        m88 = m88 + m88;
+
+        if(n18 > m88)
+        {
+                theta = m2pi(m44,n44);
+                s = sin(theta);
+                c = cos(theta);
+        }
+        else if(n28 > m88)
+        {
+                theta = m2pi(n14-m44,n44);
+                s = cos(theta);
+                c = sin(theta);
+        } else if(n38 > m88)
+        {
+                theta = m2pi(m44-n14,n44);
+                s = cos(theta);
+                c = -sin(theta);
+        } else if(n48 > m88)
+        {
+                theta = m2pi(n24-m44,n44);
+                s = sin(theta);
+                c = -cos(theta);
+        } else if(n58 > m88)
+        {
+                theta = m2pi(m44-n24,n44);
+                s = -sin(theta);
+                c = -cos(theta);
+        } else if(n68 > m88)
+        {
+                theta = m2pi(n34-m44,n44);
+                s = -cos(theta);
+                c = -sin(theta);
+        } else if(n78 > m88)
+        {
+                theta = m2pi(m44-n34,n44);
+                s = -cos(theta);
+                c = sin(theta);
+        } else
+        {
+                theta = m2pi(n44-m44,n44);
+                s = -sin(theta);
+                c = cos(theta);
+        }
+        *si = s;
+        *co = c;
+}
+
 void genBitlen(int E, int W, int H, double *aTab, double *iTab, byte *bitlenTab) {
   double *pa = aTab;
   double *pi = iTab;
@@ -54,15 +135,21 @@ void genBitlen(int E, int W, int H, double *aTab, double *iTab, byte *bitlenTab)
 double *genBigTrig(int W, int H) {
   double *out = new double[2 * W * H];
   double *p = out;
-  auto base = - M_PIl / (W * H / 2);
+  //auto base = - M_PIl / (W * H / 2);
+  auto L = W * H ;
   for (int gy = 0; gy < H / 64; ++gy) {
     for (int gx = 0; gx < W / 64; ++gx) {
       for (int y = 0; y < 64; ++y) {
         for (int x = 0; x < 64; ++x) {
           int k = (gy * 64 + y) * (gx * 64 + x);
-          auto angle = k * base;
-          *p++ = cosl(angle);
-          *p++ = sinl(angle);
+          //auto angle = k * base;
+          //*p++ = cosl(angle);
+          //*p++ = sinl(angle);
+          double c,s;
+          ap_sincos(k,L,&s,&c);
+          s = -s;
+          *p++ = c;
+          *p++ = s;
         }
       }
     }
@@ -73,13 +160,19 @@ double *genBigTrig(int W, int H) {
 double *genSin(int W, int H) {
   double *data = new double[2 * (W / 2) * H]();
   double *p = data;
-  auto base = - M_PIl / (W * H);
+  //auto base = - M_PIl / (W * H);
+  auto L = W * H * 2;
   for (int line = 0; line < H; ++line) {
     for (int col = 0; col < (W / 2); ++col) {
       int k = line + (col + ((line == 0) ? 1 : 0)) * H;
-      auto angle = k * base;
-      *p++ = sinl(angle);
-      *p++ = cosl(angle);
+      //auto angle = k * base;
+      //*p++ = sinl(angle);
+      //*p++ = cosl(angle);
+      double c,s;
+      ap_sincos(k,L,&s,&c);
+      s = -s;
+      *p++ = s;
+      *p++ = c;
     }
   }
   return data;
@@ -89,9 +182,16 @@ double *smallTrigBlock(int W, int H, double *out) {
   double *p = out;
   for (int line = 1; line < H; ++line) {
     for (int col = 0; col < W; ++col) {
-      auto angle = - M_PIl * line * col / (W * H / 2);
-      *p++ = cosl(angle);
-      *p++ = sinl(angle);
+      //auto angle = - M_PIl * line * col / (W * H / 2);
+      //*p++ = cosl(angle);
+      //*p++ = sinl(angle);
+      auto L = W * H;
+      auto k = line * col ;
+      double c,s;
+      ap_sincos(k,L,&s,&c);
+      s = -s;
+      *p++ = c;
+      *p++ = s;
     }
   }
   return p;
